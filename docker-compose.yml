@@ -1,0 +1,41 @@
+services:
+  # Local LLM runtime. Pull models into it once with:
+  #   docker compose exec ollama ollama pull llama3.1
+  #   docker compose exec ollama ollama pull nomic-embed-text
+  ollama:
+    image: ollama/ollama:latest
+    container_name: coop_ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    # For NVIDIA GPU acceleration (Linux + nvidia-container-toolkit), uncomment:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: coop_app
+    depends_on:
+      - ollama
+    ports:
+      - "8000:8000"
+    environment:
+      # Inside the compose network, reach Ollama by service name, not localhost.
+      OLLAMA_BASE_URL: http://ollama:11434
+    env_file:
+      - .env
+    volumes:
+      # Live-edit code; persist the index + your documents on the host.
+      - ./app:/app/app
+      - ./data:/app/data
+
+volumes:
+  ollama_models:

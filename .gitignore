@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Secrets
+.env
+
+# Co-op documents and the built vector index are private / regenerable — never commit them
+data/documents/*
+!data/documents/.gitkeep
+data/chroma/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

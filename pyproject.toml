@@ -1,0 +1,30 @@
+[tool.poetry]
+name = "coopagent"
+version = "0.1.0"
+description = "AI agent that answers questions about your co-op from ingested documents (RAG)"
+authors = ["David Chen <david_chen100@yahoo.com>"]
+readme = "README.md"
+packages = [{ include = "app" }]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+# LangChain core + the integrations we swap between
+langchain = "^0.3.0"
+langchain-core = "^0.3.0"
+langchain-community = "^0.3.0"
+langchain-text-splitters = "^0.3.0"
+langchain-anthropic = "^0.3.0"
+langchain-ollama = "^0.2.0"
+langchain-chroma = "^0.1.4"
+chromadb = "^0.5.0"
+# Web layer
+fastapi = "^0.115.0"
+uvicorn = { extras = ["standard"], version = "^0.30.0" }
+# Config + document loaders
+python-dotenv = "^1.0.0"
+pypdf = "^4.2.0"
+docx2txt = "^0.8"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
