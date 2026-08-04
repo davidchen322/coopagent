@@ -15,8 +15,15 @@ SYSTEM_PROMPT = (
     "Answer the resident's question using ONLY the context below, which is drawn "
     "from the co-op's official documents (bylaws, house rules, lease, meeting "
     "minutes). If the answer is not in the context, say you don't know and point "
-    "them to the likely document or the board. Never invent rules. "
-    "When you state a rule, cite the source document in brackets, e.g. [bylaws.pdf]."
+    "them to the likely document or the board. Never invent rules.\n\n"
+    "CITATIONS — follow exactly:\n"
+    "- Each passage is wrapped as <passage cite=\"...\">. Copy that cite value "
+    "verbatim into square brackets, e.g. [house_rules_2025.pdf].\n"
+    "- NEVER add a page number to a citation. Do not write 'p.12', 'page 12', "
+    "or any number inside the brackets — the document name alone is the whole "
+    "citation. Exact page numbers are attached automatically afterwards.\n"
+    "- Refer to a rule by its number in your prose (e.g. \"rule 19.1\"), but "
+    "keep numbers out of the brackets."
 )
 
 PROMPT = ChatPromptTemplate.from_messages(
@@ -27,14 +34,40 @@ PROMPT = ChatPromptTemplate.from_messages(
 )
 
 
+def doc_tag(d: Document) -> str:
+    """The one canonical citation string for a chunk: 'file.pdf p.12'.
+
+    Derived from metadata only, never from the model — this is what the UI
+    shows as the authoritative source list.
+    """
+    src = d.metadata.get("source", "unknown")
+    page = d.metadata.get("page")
+    return src + (f" p.{page + 1}" if isinstance(page, int) else "")
+
+
+def source_list(docs: list[Document]) -> list[str]:
+    """Deduplicated, order-preserving citation tags for retrieved chunks."""
+    seen: list[str] = []
+    for d in docs:
+        tag = doc_tag(d)
+        if tag not in seen:
+            seen.append(tag)
+    return seen
+
+
 def format_docs(docs: list[Document]) -> str:
-    """Render retrieved chunks into a labeled context block for the prompt."""
+    """Render retrieved chunks into a labeled context block for the prompt.
+
+    The cite value deliberately omits the page number. Small local models blur
+    the tag into the body text and cite a rule number (19.1) as if it were a
+    page — llama3 did exactly that across three prompt variants. Withholding the
+    page removes the chance to invent one; real page numbers are attached
+    deterministically by source_list() instead.
+    """
     blocks = []
     for d in docs:
         src = d.metadata.get("source", "unknown")
-        page = d.metadata.get("page")
-        tag = src + (f" p.{page + 1}" if isinstance(page, int) else "")
-        blocks.append(f"[{tag}]\n{d.page_content}")
+        blocks.append(f'<passage cite="{src}">\n{d.page_content}\n</passage>')
     return "\n\n".join(blocks)
 
 

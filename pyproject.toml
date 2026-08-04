@@ -17,6 +17,9 @@ langchain-anthropic = "^0.3.0"
 langchain-ollama = "^0.2.0"
 langchain-chroma = "^0.1.4"
 chromadb = "^0.5.0"
+# chromadb pulls in onnxruntime; pin below 1.24 since newer releases dropped
+# macOS x86_64 (Intel) wheels entirely, which breaks `poetry install` on Intel Macs.
+onnxruntime = "<1.24"
 # Web layer
 fastapi = "^0.115.0"
 uvicorn = { extras = ["standard"], version = "^0.30.0" }
