@@ -9,6 +9,7 @@ agenda item) with richer metadata — see README.
 """
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -31,6 +32,15 @@ LOADERS = {
     ".txt": TextLoader,
 }
 
+# Running page header repeated at the top of every page ("Revised January 23th
+# 2025; Supersedes all previous versions  12"). It carries no rule text but
+# lands in nearly every chunk, diluting the embedding and putting a stray bare
+# page number next to real content. Strip it at load time.
+RUNNING_HEADER_RE = re.compile(
+    r"^\s*Revised\b[^;]*;\s*Supersedes all previous versions\s*\d*\s*",
+    re.IGNORECASE,
+)
+
 
 def load_documents(folder: Path) -> list[Document]:
     docs: list[Document] = []
@@ -45,8 +55,14 @@ def load_documents(folder: Path) -> list[Document]:
         loaded = loader_cls(str(path)).load()
         # Stamp a clean source name on every page/segment so we can cite it later.
         for d in loaded:
+            d.page_content = RUNNING_HEADER_RE.sub("", d.page_content).strip()
             d.metadata["source"] = path.name
-        docs.extend(loaded)
+        # A page that was nothing but the running header is now empty — drop it
+        # so it can't come back as an empty retrieval hit.
+        kept = [d for d in loaded if d.page_content]
+        if len(kept) < len(loaded):
+            print(f"    dropped {len(loaded) - len(kept)} empty page(s) after cleanup")
+        docs.extend(kept)
     return docs
 
 

@@ -82,6 +82,8 @@
               sourcesEl = document.createElement('div');
               sourcesEl.className = 'sources';
               sourcesEl.textContent = 'Sources: ' + msg.sources.join(', ');
+            } else if (msg.type === 'error') {
+              bot.textContent += (bot.textContent ? '\n\n' : '') + '⚠️ ' + msg.message;
             }
             log.scrollTop = log.scrollHeight;
           }
