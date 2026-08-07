@@ -15,6 +15,11 @@
     .user { align-self:flex-end; background:var(--accent); color:#fff; }
     .bot { align-self:flex-start; background:var(--panel); }
     .sources { font-size:12px; color:var(--muted); margin-top:8px; }
+    .msg.pending { color:var(--muted); font-style:italic; }
+    .notice { margin-top:10px; padding:10px 12px; border-left:3px solid #e0a33e;
+              background:#231f16; color:#efd8a6; font-size:13px; line-height:1.5;
+              border-radius:0 6px 6px 0; }
+    .notice b { display:block; margin-bottom:4px; color:#f5c76a; }
     form { display:flex; gap:10px; padding:14px 18px; background:var(--panel); border-top:1px solid var(--border); }
     input { flex:1; padding:12px 14px; border-radius:8px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:15px; }
     button { padding:12px 20px; border:0; border-radius:8px; background:var(--accent); color:#fff; font-weight:600; cursor:pointer; }
@@ -38,6 +43,16 @@
       document.getElementById('meta').textContent = `${h.llm_provider} · ${h.llm_model}`;
     }).catch(() => { document.getElementById('meta').textContent = 'offline'; });
 
+    // llama3 intermittently echoes the <passage cite="..."> wrapper from the
+    // context instead of writing [filename]. Format varies run to run for the
+    // same prompt, so it's normalised here rather than argued about in the
+    // prompt. The authoritative citation is the Sources line, which comes from
+    // metadata and is never affected by this.
+    function tidy(s) {
+      return s.replace(/<passage\s+cite="([^"]*)"\s*>/g, '[$1]')
+              .replace(/<\/passage>/g, '');
+    }
+
     function bubble(cls) {
       const el = document.createElement('div');
       el.className = 'msg ' + cls;
@@ -56,6 +71,8 @@
       bubble('user').textContent = question;
       const bot = bubble('bot');
       let sourcesEl = null;
+      let noticeEl = null;
+      let raw = '';   // accumulated answer text, before tidy()
 
       try {
         const resp = await fetch('/chat', {
@@ -77,17 +94,39 @@
             if (!line) continue;
             const msg = JSON.parse(line);
             if (msg.type === 'token') {
-              bot.textContent += msg.text;
+              raw += msg.text;
+              bot.textContent = tidy(raw);
+            } else if (msg.type === 'status') {
+              bot.classList.add('pending');
+              bot.textContent = msg.text;
+            } else if (msg.type === 'answer') {
+              // Law-sensitive answers arrive whole, after server-side checking —
+              // they replace the placeholder rather than appending to it.
+              bot.classList.remove('pending');
+              raw = msg.text;
+              bot.textContent = tidy(raw);
             } else if (msg.type === 'sources' && msg.sources.length) {
               sourcesEl = document.createElement('div');
               sourcesEl.className = 'sources';
               sourcesEl.textContent = 'Sources: ' + msg.sources.join(', ');
+            } else if (msg.type === 'notice') {
+              // Built with textContent, never innerHTML — the notice is fixed
+              // text from the server and must render exactly as written.
+              noticeEl = document.createElement('div');
+              noticeEl.className = 'notice';
+              const head = document.createElement('b');
+              head.textContent = '⚖️ Check with the board';
+              noticeEl.appendChild(head);
+              noticeEl.appendChild(document.createTextNode(msg.text));
             } else if (msg.type === 'error') {
-              bot.textContent += (bot.textContent ? '\n\n' : '') + '⚠️ ' + msg.message;
+              raw += (raw ? '\n\n' : '') + '⚠️ ' + msg.message;
+              bot.classList.remove('pending');
+              bot.textContent = tidy(raw);
             }
             log.scrollTop = log.scrollHeight;
           }
         }
+        if (noticeEl) bot.appendChild(noticeEl);
         if (sourcesEl) bot.appendChild(sourcesEl);
       } catch (err) {
         bot.textContent = '⚠️ Error: ' + err.message;

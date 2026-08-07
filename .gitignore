@@ -18,3 +18,6 @@ data/chroma/
 .DS_Store
 .idea/
 .vscode/
+
+# Logs — DEBUG level records resident questions and document text.
+*.log

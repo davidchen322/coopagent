@@ -37,6 +37,9 @@ class Settings:
     retrieval_k: int
     chunk_size: int
     chunk_overlap: int
+    # DEBUG puts resident questions and document text in the log — see app/logs.py.
+    log_level: str = "INFO"
+    log_file: str | None = None
     collection_name: str = "coop"
 
 
@@ -53,6 +56,8 @@ def load_settings() -> Settings:
         retrieval_k=int(os.getenv("RETRIEVAL_K", "4")),
         chunk_size=int(os.getenv("CHUNK_SIZE", "800")),
         chunk_overlap=int(os.getenv("CHUNK_OVERLAP", "100")),
+        log_level=os.getenv("LOG_LEVEL", "INFO").strip().upper(),
+        log_file=os.getenv("LOG_FILE") or None,
     )
 
 

@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
+import uuid
 from pathlib import Path
 
 from chromadb.errors import InvalidCollectionException
@@ -14,10 +16,13 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from app.config import settings
-from app.rag import build_chain, get_retriever, source_list
+from app.logs import get_logger
+from app.notices import SAFE_FALLBACK, match_notice, redact_legal_claims
+from app.rag import build_chain, doc_tag, get_retriever, source_list
 
 app = FastAPI(title="CoopAgent")
 WEB_DIR = Path(__file__).parent / "web"
+log = get_logger("chat")
 
 # Retriever/chain are cached, not rebuilt per request — constructing them opens
 # the Chroma client and the embedding client, which is far too costly per call.
@@ -77,6 +82,7 @@ async def reload() -> dict:
     """
     retriever, _ = await _refresh_handles()
     count = len(retriever.vectorstore.get()["documents"])
+    log.info("reloaded — %d chunk(s) in the collection", count)
     return {"status": "reloaded", "chunks": count}
 
 
@@ -90,6 +96,13 @@ async def chat(req: ChatRequest) -> StreamingResponse:
     question = req.question.strip()
 
     async def event_stream():
+        # Short id so interleaved requests from different residents stay
+        # readable in the log.
+        rid = uuid.uuid4().hex[:8]
+        started = time.perf_counter()
+        log.info("%s question received (%d chars)", rid, len(question))
+        log.debug("%s question: %s", rid, question)
+
         retriever, chain = await _handles()
 
         # 1) Retrieve first so the UI can show sources immediately.
@@ -101,21 +114,63 @@ async def chat(req: ChatRequest) -> StreamingResponse:
         #    Retrieval happens before any token is streamed, so this is the safe
         #    place to notice a re-ingest and reopen. Retry once; if it fails
         #    again the problem is not a stale handle.
+        retrieval_started = time.perf_counter()
         try:
             docs = await retriever.ainvoke(question)
         except InvalidCollectionException:
+            log.warning("%s collection is gone (re-ingest?) — reopening", rid)
             retriever, chain = await _refresh_handles()
             docs = await retriever.ainvoke(question)
 
+        log.info(
+            "%s retrieved %d chunk(s) in %s: %s",
+            rid, len(docs), _ms(retrieval_started), ", ".join(source_list(docs)) or "-",
+        )
+        for d in docs:
+            log.debug("%s   %s :: %s", rid, doc_tag(d),
+                      d.page_content[:100].replace("\n", " "))
+
         yield _sse({"type": "sources", "sources": source_list(docs)})
 
-        # 2) Stream the answer token by token.
+        # 2) Law-sensitive topics get a fixed, human-reviewed notice. Matched in
+        #    code and sent verbatim — the model is never asked to produce it, and
+        #    never sees it, so it cannot reword or contradict it.
+        notice = match_notice(question)
+        if notice is not None:
+            log.info("%s notice: %s", rid, notice.topic)
+            yield _sse({"type": "notice", "topic": notice.topic, "text": notice.text})
+
+        # 3) Ordinary questions stream token by token. Law-sensitive ones are
+        #    buffered instead and checked before anything is shown: a fabricated
+        #    legal claim cannot be unsent once it has been streamed to the screen.
+        #    The cost is losing the streaming effect on those questions only.
+        generation_started = time.perf_counter()
         try:
-            async for token in chain.astream(question):
-                yield _sse({"type": "token", "text": token})
+            if notice is None:
+                length = 0
+                async for token in chain.astream(question):
+                    length += len(token)
+                    yield _sse({"type": "token", "text": token})
+                log.info("%s streamed %d chars in %s", rid, length,
+                         _ms(generation_started))
+            else:
+                yield _sse({"type": "status", "text": "Checking the documents…"})
+                parts = [token async for token in chain.astream(question)]
+                answer, redacted = redact_legal_claims("".join(parts))
+                if redacted:
+                    log.warning("%s redacted invented legal claim(s) [%s]",
+                                rid, notice.topic)
+                if not answer:
+                    log.warning("%s answer was entirely legal claim — using fallback",
+                                rid)
+                log.info("%s buffered %d chars in %s", rid, len(answer),
+                         _ms(generation_started))
+                yield _sse({"type": "answer", "text": answer or SAFE_FALLBACK})
         except Exception as exc:  # surface errors in the UI instead of a dead stream
+            log.error("%s generation failed: %s: %s", rid, type(exc).__name__, exc)
             yield _sse({"type": "error", "message": f"{type(exc).__name__}: {exc}"})
 
+        log.info("%s done in %s", rid, _ms(started))
         yield _sse({"type": "done"})
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
@@ -123,3 +178,7 @@ async def chat(req: ChatRequest) -> StreamingResponse:
 
 def _sse(payload: dict) -> str:
     return f"data: {json.dumps(payload)}\n\n"
+
+
+def _ms(since: float) -> str:
+    return f"{(time.perf_counter() - since) * 1000:.0f}ms"
